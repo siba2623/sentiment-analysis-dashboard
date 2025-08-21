@@ -35,8 +35,15 @@ st.markdown("""
 st.markdown('<h1 class="main-header">📊 Advanced Sentiment Analysis Dashboard</h1>', unsafe_allow_html=True)
 st.markdown("### Analyze emotions in text with AI-powered insights and beautiful visualizations")
 
-# Initialize Hugging Face API key
-api_key = st.sidebar.text_input("Enter your Hugging Face API Token:", type="password")
+# Initialize Hugging Face API key - FIXED FOR DEPLOYMENT
+if 'HUGGINGFACE_API_KEY' in st.secrets:
+    api_key = st.secrets['HUGGINGFACE_API_KEY']
+    st.sidebar.success("✅ API key loaded from secrets")
+else:
+    api_key = st.sidebar.text_input("Enter your Hugging Face API Token:", type="password")
+    if api_key:
+        st.sidebar.info("🔑 Using sidebar API key")
+
 API_URL = "https://api-inference.huggingface.co/models/bhadresh-savani/bert-base-uncased-emotion"
 headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
@@ -49,6 +56,15 @@ def query_sentiment(text):
     payload = {"inputs": text}
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
+        
+        # Check for API key errors
+        if response.status_code == 401:
+            st.error("❌ Invalid API key. Please check your Hugging Face token.")
+            return None, None, None
+        elif response.status_code == 403:
+            st.error("🔒 API access denied. The model may need to load.")
+            return None, None, None
+            
         response.raise_for_status()
         result = response.json()
         
@@ -60,6 +76,7 @@ def query_sentiment(text):
             simple_label = label_map.get(emotion, 'Neutral')
             return simple_label, top_prediction['score'], emotion
         else:
+            st.error(f"Unexpected API response: {result}")
             return None, None, None
             
     except requests.exceptions.RequestException as e:
@@ -115,6 +132,8 @@ with tab1:
                 ))
                 fig_gauge.update_layout(height=300)
                 st.plotly_chart(fig_gauge, use_container_width=True)
+            else:
+                st.error("❌ Analysis failed. Please check your API key and try again.")
     
     with col2:
         st.info("💡 **Tips for better analysis:**")
@@ -154,85 +173,88 @@ with tab2:
             st.success(f"✅ Using column: **'{text_column}'** for analysis")
             
             if st.button("📤 Analyze Entire File", key="analyze_batch", use_container_width=True):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                results = []
-                emotions_list = []
-                
-                for i, row in enumerate(df[text_column]):  # Use the detected column
-                    percent_complete = int((i + 1) / len(df) * 100)
-                    progress_bar.progress(percent_complete)
-                    status_text.text(f"📊 Analyzing {i+1} of {len(df)}...")
+                if not api_key:
+                    st.error("❌ Please enter your Hugging Face API token first.")
+                else:
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    results = []
+                    emotions_list = []
                     
-                    label, score, detailed_emotion = query_sentiment(str(row))
-                    if label and score:
-                        results.append({
-                            'text': row, 
-                            'sentiment': label, 
-                            'confidence': score,
-                            'detailed_emotion': detailed_emotion,
-                            'text_length': len(str(row))
-                        })
-                        emotions_list.append(detailed_emotion)
-                    else:
-                        results.append({
-                            'text': row, 
-                            'sentiment': 'Error', 
-                            'confidence': 0,
-                            'detailed_emotion': 'error',
-                            'text_length': len(str(row))
-                        })
-                
-                results_df = pd.DataFrame(results)
-                status_text.text("✅ Analysis complete!")
-                
-                # Display results
-                st.subheader("📊 Analysis Results")
-                
-                # Summary statistics
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Total Texts", len(results_df))
-                with col2:
-                    positive_count = len(results_df[results_df['sentiment'] == 'Positive'])
-                    st.metric("Positive", positive_count)
-                with col3:
-                    negative_count = len(results_df[results_df['sentiment'] == 'Negative'])
-                    st.metric("Negative", negative_count)
-                with col4:
-                    neutral_count = len(results_df[results_df['sentiment'] == 'Neutral'])
-                    st.metric("Neutral", neutral_count)
-                
-                # Visualizations
-                viz_col1, viz_col2 = st.columns(2)
-                
-                with viz_col1:
-                    # Sentiment distribution pie chart
-                    fig_pie = px.pie(results_df, names='sentiment', title='Sentiment Distribution',
-                                    color='sentiment', color_discrete_map={'Positive':'green', 'Negative':'red', 'Neutral':'orange'})
-                    st.plotly_chart(fig_pie, use_container_width=True)
-                
-                with viz_col2:
-                    # Detailed emotions bar chart
-                    if 'detailed_emotion' in results_df.columns:
-                        fig_emotion = px.bar(results_df['detailed_emotion'].value_counts(), 
-                                           title="Detailed Emotions Analysis",
-                                           labels={'value': 'Count', 'index': 'Emotion'})
-                        st.plotly_chart(fig_emotion, use_container_width=True)
-                
-                # Confidence distribution
-                fig_confidence = px.histogram(results_df, x='confidence', title='Confidence Score Distribution', nbins=20)
-                st.plotly_chart(fig_confidence, use_container_width=True)
-                
-                # Download results
-                csv = results_df.to_csv(index=False)
-                st.download_button(
-                    label="💾 Download Full Results as CSV",
-                    data=csv,
-                    file_name=f"sentiment_analysis_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
+                    for i, row in enumerate(df[text_column]):  # Use the detected column
+                        percent_complete = int((i + 1) / len(df) * 100)
+                        progress_bar.progress(percent_complete)
+                        status_text.text(f"📊 Analyzing {i+1} of {len(df)}...")
+                        
+                        label, score, detailed_emotion = query_sentiment(str(row))
+                        if label and score:
+                            results.append({
+                                'text': row, 
+                                'sentiment': label, 
+                                'confidence': score,
+                                'detailed_emotion': detailed_emotion,
+                                'text_length': len(str(row))
+                            })
+                            emotions_list.append(detailed_emotion)
+                        else:
+                            results.append({
+                                'text': row, 
+                                'sentiment': 'Error', 
+                                'confidence': 0,
+                                'detailed_emotion': 'error',
+                                'text_length': len(str(row))
+                            })
+                    
+                    results_df = pd.DataFrame(results)
+                    status_text.text("✅ Analysis complete!")
+                    
+                    # Display results
+                    st.subheader("📊 Analysis Results")
+                    
+                    # Summary statistics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Texts", len(results_df))
+                    with col2:
+                        positive_count = len(results_df[results_df['sentiment'] == 'Positive'])
+                        st.metric("Positive", positive_count)
+                    with col3:
+                        negative_count = len(results_df[results_df['sentiment'] == 'Negative'])
+                        st.metric("Negative", negative_count)
+                    with col4:
+                        neutral_count = len(results_df[results_df['sentiment'] == 'Neutral'])
+                        st.metric("Neutral", neutral_count)
+                    
+                    # Visualizations
+                    viz_col1, viz_col2 = st.columns(2)
+                    
+                    with viz_col1:
+                        # Sentiment distribution pie chart
+                        fig_pie = px.pie(results_df, names='sentiment', title='Sentiment Distribution',
+                                        color='sentiment', color_discrete_map={'Positive':'green', 'Negative':'red', 'Neutral':'orange'})
+                        st.plotly_chart(fig_pie, use_container_width=True)
+                    
+                    with viz_col2:
+                        # Detailed emotions bar chart
+                        if 'detailed_emotion' in results_df.columns:
+                            fig_emotion = px.bar(results_df['detailed_emotion'].value_counts(), 
+                                               title="Detailed Emotions Analysis",
+                                               labels={'value': 'Count', 'index': 'Emotion'})
+                            st.plotly_chart(fig_emotion, use_container_width=True)
+                    
+                    # Confidence distribution
+                    fig_confidence = px.histogram(results_df, x='confidence', title='Confidence Score Distribution', nbins=20)
+                    st.plotly_chart(fig_confidence, use_container_width=True)
+                    
+                    # Download results
+                    csv = results_df.to_csv(index=False)
+                    st.download_button(
+                        label="💾 Download Full Results as CSV",
+                        data=csv,
+                        file_name=f"sentiment_analysis_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
 
 with tab3:
     st.header("📈 Advanced Analytics")
